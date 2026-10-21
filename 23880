@@ -1,0 +1,447 @@
+package com.horror/captcha
+
+import android.content.ComponentName
+import android.content.Context
+import android.content.pm.PackageManager
+import android.graphics.PointF
+import android.os.Build
+import android.os.Bundle
+import android.os.CombinedVibration
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.delay
+import kotlin.random.Random
+import kotlin.system.exitProcess
+
+enum class Stage {
+    START, GRID_LOVE, TEXT_LOVE, BIO_SCAN, CHECKLIST, CRASH_ERROR, RESISTANCE_CURSE
+}
+
+class MainActivity : ComponentActivity() {
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+
+        val prefs = getSharedPreferences("horror_captcha", Context.MODE_PRIVATE)
+        val isCursed = prefs.getBoolean("is_rejected_forever", false)
+
+        setContent {
+            var currentStage by remember { 
+                mutableStateOf(if (isCursed) Stage.RESISTANCE_CURSE else Stage.START) 
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF0F0F0F))
+            ) {
+                when (currentStage) {
+                    Stage.START -> StartCaptchaScreen { currentStage = Stage.GRID_LOVE }
+                    Stage.GRID_LOVE -> GridLoveScreen { currentStage = Stage.TEXT_LOVE }
+                    Stage.TEXT_LOVE -> TextCaptchaScreen { currentStage = Stage.BIO_SCAN }
+                    Stage.BIO_SCAN -> BioScanScreen { currentStage = Stage.CHECKLIST }
+                    Stage.CHECKLIST -> ChecklistScreen { currentStage = Stage.CRASH_ERROR }
+                    Stage.CRASH_ERROR -> CrashScreen { executeCurseAndCrash() }
+                    Stage.RESISTANCE_CURSE -> TentaclesResistanceScreen {
+                        triggerVibration(100)
+                        finishAffinity()
+                    }
+                }
+            }
+        }
+    }
+
+    private fun triggerVibration(durationMs: Long) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            vm.vibrate(CombinedVibration.createParallel(
+                VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE)
+            ))
+        } else {
+            @Suppress("DEPRECATION")
+            val v = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            v.vibrate(durationMs)
+        }
+    }
+
+    private fun executeCurseAndCrash() {
+        val prefs = getSharedPreferences("horror_captcha", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("is_rejected_forever", true).apply()
+
+        // Переключаем иконку
+        val pm = packageManager
+        pm.setComponentEnabledSetting(
+            ComponentName(this, "$packageName.NormalAlias"),
+            PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+            PackageManager.DONT_KILL_APP
+        )
+        pm.setComponentEnabledSetting(
+            ComponentName(this, "$packageName.CursedAlias"),
+            PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+            PackageManager.DONT_KILL_APP
+        )
+
+        triggerVibration(400)
+        finishAffinity()
+        exitProcess(0)
+    }
+}
+
+// ------------------- ЭКРАНЫ -------------------
+
+@Composable
+fun StartCaptchaScreen(onNext: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Row(
+            modifier = Modifier
+                .border(1.dp, Color.Gray, RoundedCornerShape(4.dp))
+                .background(Color.White)
+                .padding(24.dp)
+                .clickable { onNext() },
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                Modifier
+                    .size(28.dp)
+                    .border(2.dp, Color.Gray, RoundedCornerShape(2.dp)))
+            Spacer(Modifier.width(16.dp))
+            Text("I'm not a robot", color = Color.Black, fontSize = 18.sp)
+        }
+    }
+}
+
+@Composable
+fun GridLoveScreen(onNext: () -> Unit) {
+    var errorText by remember { mutableStateOf("") }
+    val selected = remember { mutableStateListOf<Int>() }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(20.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("Select all images with\nsomeone who loves you", 
+            color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(16.dp))
+
+        // Сетка 3х3
+        Column {
+            for (row in 0..2) {
+                Row {
+                    for (col in 0..2) {
+                        val index = row * 3 + col
+                        val isSelected = selected.contains(index)
+                        Box(
+                            Modifier
+                                .size(90.dp)
+                                .padding(4.dp)
+                                .border(2.dp, if (isSelected) Color.Red else Color.DarkGray)
+                                .background(Color.Black)
+                                .clickable {
+                                    if (isSelected) selected.remove(index) else selected.add(index)
+                                },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            StickFiguresCanvas(isAlone = index == 4) // В центре — одинокий силуэт
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+        if (errorText.isNotEmpty()) {
+            Text(errorText, color = Color.Red, fontSize = 14.sp)
+        }
+        Spacer(Modifier.height(16.dp))
+
+        Button(
+            onClick = {
+                errorText = "None found. Verification failed."
+                onNext()
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = Color.White)
+        ) {
+            Text("VERIFY", color = Color.Black)
+        }
+    }
+}
+
+@Composable
+fun StickFiguresCanvas(isAlone: Boolean) {
+    Canvas(Modifier.fillMaxSize()) {
+        val cX = size.width / 2
+        val cY = size.height / 2
+        if (isAlone) {
+            // Одинокий
+            drawCircle(Color.White, radius = 8f, center = Offset(cX, cY - 20))
+            drawLine(Color.White, Offset(cX, cY - 12), Offset(cX, cY + 20), strokeWidth = 5f)
+            drawLine(Color.White, Offset(cX, cY + 20), Offset(cX - 10, cY + 45), strokeWidth = 5f)
+            drawLine(Color.White, Offset(cX, cY + 20), Offset(cX + 10, cY + 45), strokeWidth = 5f)
+        } else {
+            // Пара с сердечком
+            drawCircle(Color.White, radius = 6f, center = Offset(cX - 15, cY - 15))
+            drawCircle(Color.White, radius = 6f, center = Offset(cX + 15, cY - 15))
+            drawCircle(Color.Red, radius = 5f, center = Offset(cX, cY - 30))
+            drawLine(Color.White, Offset(cX - 15, cY - 9), Offset(cX - 15, cY + 20), strokeWidth = 4f)
+            drawLine(Color.White, Offset(cX + 15, cY - 9), Offset(cX + 15, cY + 20), strokeWidth = 4f)
+            drawLine(Color.White, Offset(cX - 15, cY), Offset(cX + 15, cY), strokeWidth = 3f) // держатся за руки
+        }
+    }
+}
+
+@Composable
+fun TextCaptchaScreen(onNext: () -> Unit) {
+    var textInput by remember { mutableStateOf("") }
+    var failed by remember { mutableStateOf(false) }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("Type the text below to prove you are human", color = Color.White, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(24.dp))
+
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(110.dp)
+                .background(Color(0xFFE5E5E5)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "anyone can find love",
+                color = Color.Black,
+                fontSize = 22.sp,
+                fontFamily = FontFamily.Cursive
+            )
+            if (failed) {
+                Text(
+                    "(except you)",
+                    color = Color.Red,
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Cursive,
+                    modifier = Modifier.padding(top = 40.dp)
+                )
+            }
+        }
+
+        Spacer(Modifier.height(20.dp))
+        OutlinedTextField(
+            value = textInput,
+            onValueChange = { textInput = it },
+            singleLine = true,
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedTextColor = Color.White,
+                unfocusedTextColor = Color.White
+            )
+        )
+        Spacer(Modifier.height(16.dp))
+
+        Button(
+            onClick = {
+                failed = true
+                onNext()
+            },
+            colors = ButtonDefaults.buttonColors(containerColor = Color.White)
+        ) {
+            Text("VERIFY", color = Color.Black)
+        }
+    }
+}
+
+@Composable
+fun BioScanScreen(onNext: () -> Unit) {
+    var scanning by remember { mutableStateOf(false) }
+    var resultText by remember { mutableStateOf("") }
+
+    LaunchedEffect(scanning) {
+        if (scanning) {
+            delay(1200)
+            resultText = "Texts sent: 46\nTexts back: 0\nHugs this year: 0\nLast 'I love you': NEVER\n\nRESULT: ROBOT"
+            delay(2500)
+            onNext()
+        }
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        scanning = true
+                        tryAwaitRelease()
+                    }
+                )
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("BIOMETRIC HUMAN SCAN", color = Color.Gray, fontSize = 14.sp)
+            Spacer(Modifier.height(20.dp))
+            Box(
+                Modifier
+                    .size(100.dp)
+                    .border(2.dp, if (scanning) Color.Red else Color.Cyan, RoundedCornerShape(50.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("HOLD", color = Color.White)
+            }
+            Spacer(Modifier.height(24.dp))
+            Text(resultText, color = Color.Red, textAlign = TextAlign.Center, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+fun ChecklistScreen(onNext: () -> Unit) {
+    val items = listOf("I'm not a robot", "I'm not alone", "I'm fine", "I'm lovable", "I'm not lonely")
+    val checked = remember { mutableStateMapOf<Int, Boolean>() }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center
+    ) {
+        Text("Confirm statements:", color = Color.White, fontSize = 20.sp)
+        Spacer(Modifier.height(16.dp))
+
+        items.forEachIndexed { i, text ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 6.dp)
+                    .background(Color(0xFF222222))
+                    .clickable {
+                        checked[i] = true
+                        if (checked.size >= items.size) onNext()
+                    }
+                    .padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = if (checked[i] == true) "❌" else "⬜",
+                    fontSize = 18.sp
+                )
+                Spacer(Modifier.width(12.dp))
+                Text(text, color = Color.White, fontSize = 16.sp)
+            }
+        }
+    }
+}
+
+@Composable
+fun CrashScreen(onCrash: () -> Unit) {
+    LaunchedEffect(Unit) {
+        delay(1800)
+        onCrash()
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black), 
+        contentAlignment = Alignment.Center
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("TOO MANY ATTEMPTS.", color = Color.Red, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Text("try again later. (or never)", color = Color.DarkGray, fontSize = 16.sp)
+            Spacer(Modifier.height(24.dp))
+            Text("NOT HUMAN ENOUGH", color = Color.White, fontSize = 14.sp)
+        }
+    }
+}
+
+// ------------------- ЩУПАЛЬЦА / ВЕНОМ ПРИ ВТОРОМ ЗАПУСКЕ -------------------
+
+@Composable
+fun TentaclesResistanceScreen(onComplete: () -> Unit) {
+    val animProgress = remember { Animatable(0f) }
+
+    LaunchedEffect(Unit) {
+        animProgress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = 1600, easing = FastOutSlowInEasing)
+        )
+        delay(400)
+        onComplete()
+    }
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        Canvas(Modifier.fillMaxSize()) {
+            val p = animProgress.value
+            val w = size.width
+            val h = size.height
+
+            // Процедурные темные щупальца, ползущие к центру
+            val tentacleBranches = 16
+            for (i in 0 until tentacleBranches) {
+                val angle = (i.toFloat() / tentacleBranches) * (2 * Math.PI)
+                val startX = (w / 2 + Math.cos(angle) * (w * 0.7f)).toFloat()
+                val startY = (h / 2 + Math.sin(angle) * (h * 0.7f)).toFloat()
+
+                val path = Path().apply {
+                    moveTo(startX, startY)
+                    cubicTo(
+                        startX * (1 - p * 0.4f), startY * (1 - p * 0.4f),
+                        w / 2 + (Random(i).nextFloat() - 0.5f) * 150f,
+                        h / 2 + (Random(i * 2).nextFloat() - 0.5f) * 150f,
+                        w / 2 * p + startX * (1 - p),
+                        h / 2 * p + startY * (1 - p)
+                    )
+                }
+                drawPath(path, color = Color(0xFF140202), style = Stroke(width = 30f * p))
+                drawPath(path, color = Color.Red, style = Stroke(width = 4f * p))
+            }
+        }
+
+        Column(
+            Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                "ВСЕ ЛЮБИМЫ.\nКРОМЕ ТЕБЯ.",
+                color = Color.Red,
+                fontSize = 28.sp,
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center,
+                lineHeight = 36.sp
+            )
+        }
+    }
+}
